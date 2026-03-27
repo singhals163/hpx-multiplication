@@ -5,7 +5,6 @@
 #include <vector>
 #include <chrono>
 
-// A simple 1D-backed matrix structure for contiguous memory access
 struct Matrix {
     size_t rows, cols;
     std::vector<double> data;
@@ -20,7 +19,20 @@ struct Matrix {
     }
 };
 
-// Parallelize the computation over the rows of the resulting matrix C
+// Standard sequential execution policy
+void multiply_sequential(const Matrix& A, const Matrix& B, Matrix& C) {
+    hpx::experimental::for_loop(hpx::execution::seq, 0, A.rows, [&](size_t i) {
+        for (size_t j = 0; j < B.cols; ++j) {
+            double sum = 0.0;
+            for (size_t k = 0; k < A.cols; ++k) {
+                sum += A(i, k) * B(k, j);
+            }
+            C(i, j) = sum;
+        }
+    });
+}
+
+// Parallel execution policy distributing work across OS threads
 void multiply_parallel(const Matrix& A, const Matrix& B, Matrix& C) {
     hpx::experimental::for_loop(hpx::execution::par, 0, A.rows, [&](size_t i) {
         for (size_t j = 0; j < B.cols; ++j) {
@@ -34,28 +46,44 @@ void multiply_parallel(const Matrix& A, const Matrix& B, Matrix& C) {
 }
 
 int main() {
-    size_t size = 512; // 512x512 matrix
+    size_t size = 512; 
     Matrix A(size, size);
     Matrix B(size, size);
-    Matrix C(size, size);
+    Matrix C_seq(size, size);
+    Matrix C_par(size, size);
 
-    // Initialize matrices in parallel
+    // Initialize matrices
     hpx::experimental::for_loop(hpx::execution::par, 0, size * size, [&](size_t i) {
         A.data[i] = 1.0;
         B.data[i] = 2.0;
     });
 
-
-    auto start = std::chrono::high_resolution_clock::now();
-    multiply_parallel(A, B, C);
-    auto end = std::chrono::high_resolution_clock::now();
+    // Sequential Multiplication
+    auto start_seq = std::chrono::high_resolution_clock::now();
+    multiply_sequential(A, B, C_seq);
+    auto end_seq = std::chrono::high_resolution_clock::now();
     
-    std::chrono::duration<double> diff = end - start;
-    std::cout << "Matrix Multiplication (" << size << "x" << size << ") completed in " 
-              << diff.count() << " seconds.\n";
-              
-    // Verification: C(0,0) should be size * (1.0 * 2.0) = 1024.0
-    std::cout << "Top-left element of C: " << C(0, 0) << "\n"; 
+    std::chrono::duration<double> diff_seq = end_seq - start_seq;
+    std::cout << "[Sequential] Completed in: " << diff_seq.count() << " seconds.\n";
+
+    // Parallel Multiplication
+    auto start_par = std::chrono::high_resolution_clock::now();
+    multiply_parallel(A, B, C_par);
+    auto end_par = std::chrono::high_resolution_clock::now();
+    
+    std::chrono::duration<double> diff_par = end_par - start_par;
+    std::cout << "[Parallel]   Completed in: " << diff_par.count() << " seconds.\n";
+
+    // Calculate Speedup
+    double speedup = diff_seq.count() / diff_par.count();
+    std::cout << "\nParallel Speedup: " << speedup << "x\n";
+    
+    // Verification check to ensure both computed the same result
+    if (C_seq(0, 0) == C_par(0, 0)) {
+        std::cout << "Verification: PASSED (Outputs match)\n";
+    } else {
+        std::cout << "Verification: FAILED (Outputs mismatch)\n";
+    }
 
     return 0;
 }
